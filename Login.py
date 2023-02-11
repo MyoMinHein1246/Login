@@ -1,23 +1,35 @@
 from PyQt5.QtWidgets import *
 from PyQt5 import uic
 import sys
+import sqlite3
 
 
-FILE_NAME = "database.txt"
+def resource_path(relative_path) -> str:
+    import os, sys
+
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 
 
 class MsgBox():
 	def show(self, icon, title: str, msg:str):
 		msgBox = QMessageBox(icon,title, msg)
-		msgBox.setInformativeText("Please try again.")
 		msgBox.exec()
 		print(msg)
 
 
 class LoginCheck():
-	def __init__(self, parent) -> None:
+	def __init__(self, parent, cursor) -> None:
 		self.editUsername = parent.editUsername
 		self.editPassword = parent.editPassword
+		self.cursor = cursor
 
 	def tryLogin(self) -> str:
 		username = self.editUsername.text()
@@ -51,27 +63,27 @@ class LoginCheck():
 
 		if self.checkUsername(username):
 			msg = "User already existed with the username."
-			return
+			return msg
 
-		with open(FILE_NAME, 'a') as f:
-			try:
-				f.write("\n{}, {}".format(username, password))
-				msg = "User created successfully!"
-			except Exception:
-				msg = "Error while writing data."
-				return
-			
-		return msg
+		try:
+			self.cursor.execute("INSERT INTO login(username, password) VALUES(?, ?);", (username, password))
+			msg = "User created successfully!"
+		except Exception:
+			msg = "Error while writing data."
+		finally:
+			return msg
 
 	def getDataDict(self) -> list:
 		dataDict = list(dict())
 
-		with open(FILE_NAME, 'r') as f:
-			for line in f.readlines():
-				username = line.split(',')[0].strip()
-				password = line.split(',')[1].strip()
-				data = {'username':username, 'password':password}
-				dataDict.append(data)
+		self.cursor.execute("SELECT * FROM login;")
+		
+		for data in self.cursor.fetchall():
+			id = data[0]
+			username = data[1].strip()
+			password = data[2].strip()
+			data = { 'id': id, 'username':username, 'password':password }
+			dataDict.append(data)
 
 		return dataDict
 
@@ -87,13 +99,13 @@ class LoginCheck():
 
 
 class LoginForm(QDialog):
-	def __init__(self) -> None:
+	def __init__(self, cursor) -> None:
 		super(LoginForm, self).__init__()
-		uic.loadUi("LoginForm.ui", self)
+		uic.loadUi(resource_path("./Resources/LoginForm.ui"), self)
 		
 		self.msgBox = MsgBox()
 
-		loginCheck = LoginCheck(self)
+		loginCheck = LoginCheck(self, cursor)
 
 		self.btnLogin.clicked.connect(lambda: self.msgBox.show(QMessageBox.Information, "Login", loginCheck.tryLogin()))
 		self.btnCreate.clicked.connect(lambda: self.msgBox.show(QMessageBox.Information, "Create", loginCheck.createNewAccount()))
@@ -104,13 +116,29 @@ class LoginForm(QDialog):
 
 
 def main():
-	app = QApplication.instance()
-	if not app:
-		app = QApplication([])
+	try:
+		app = QApplication.instance()
+		if not app:
+			app = QApplication([])
 		
-	form = LoginForm()
-	form.show()
-	sys.exit(app.exec_())
+		connection = sqlite3.connect(resource_path("./Resources/LoginData.db"))
+		cursor = connection.cursor()
+
+		form = LoginForm(cursor)
+		form.show()
+
+		code = app.exec_()
+
+	except sqlite3.Error as err:
+		print(err)
+
+	finally:
+		if cursor:
+			connection.commit()
+			cursor.close()
+			connection.close()
+
+		sys.exit(code)
 
 
 if __name__ == "__main__":
